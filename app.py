@@ -87,6 +87,15 @@ async def _fetch_calibration() -> dict:
         return {}
 
 
+async def _resume_from_checkpoint(thread_id: str, checkpoint_id: str):
+    """B1 — resume graph from a specific earlier checkpoint."""
+    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
+        await cp.setup()
+        app = build_graph(cp)
+        cfg = {"configurable": {"thread_id": thread_id, "checkpoint_id": checkpoint_id}}
+        return await app.ainvoke(None, cfg)
+
+
 async def _fetch_checkpoints(thread_id: str) -> list[dict]:
     """B1 — list all LangGraph checkpoints for a thread."""
     try:
@@ -266,15 +275,6 @@ async def run_graph(pr_url: str, thread_id: str, resume_value=None):
         if resume_value is None:
             return await app.ainvoke({"pr_url": pr_url, "thread_id": thread_id}, cfg)
         return await app.ainvoke(Command(resume=resume_value), cfg)
-
-
-async def _resume_from_checkpoint(thread_id: str, checkpoint_id: str):
-    """B1 — resume graph from a specific earlier checkpoint."""
-    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
-        await cp.setup()
-        app = build_graph(cp)
-        cfg = {"configurable": {"thread_id": thread_id, "checkpoint_id": checkpoint_id}}
-        return await app.ainvoke(None, cfg)
 
 
 # ─── Main flow ─────────────────────────────────────────────────────────────
