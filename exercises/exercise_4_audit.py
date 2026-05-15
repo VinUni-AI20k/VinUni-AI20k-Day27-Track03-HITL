@@ -215,25 +215,58 @@ def _post(state) -> str:
 async def node_commit(state):
     console.print("[cyan]→ commit[/cyan]")
     t0 = time.monotonic()
-    # Two paths converge here:
-    #   1. human_approval → commit (only post if approved)
-    #   2. escalate → synthesize → commit (always post the refined review)
+    # Three paths converge here:
+    #   1. human_approval → approve → commit
+    #   2. human_approval → edit   → commit (auto-edit: LLM rewrites with feedback)
+    #   3. escalate → synthesize   → commit (always post the refined review)
+    refined_analysis = state["analysis"]
+
     if state.get("escalation_answers") or state.get("human_choice") == "approve":
         action = _post(state)
+
+    elif state.get("human_choice") == "edit" and state.get("human_feedback"):
+        # Bonus B4 — Auto-edit: call LLM to rewrite review using reviewer feedback
+        console.print("[cyan]  → auto-edit[/cyan]  [dim]rewriting review with feedback...[/dim]")
+        llm = get_llm().with_structured_output(PRAnalysis)
+        a = state["analysis"]
+        with console.status("[dim]LLM rewriting review...[/dim]"):
+            refined_analysis = await llm.ainvoke([
+                {"role": "system", "content": (
+                    "Senior reviewer. Rewrite the review incorporating the human feedback. "
+                    "Structured output. Keep confidence calibration rules."
+                )},
+                {"role": "user", "content": (
+                    f"Original diff:\n{state['pr_diff']}\n\n"
+                    f"Original summary: {a.summary}\n"
+                    f"Original comments: {[c.model_dump() for c in a.comments]}\n\n"
+                    f"Reviewer feedback requesting edit: {state['human_feedback']}\n\n"
+                    "Rewrite the review incorporating this feedback."
+                )},
+            ])
+        console.print(f"  [green]✓[/green] auto-edited (confidence {a.confidence:.0%} → {refined_analysis.confidence:.0%})")
+        # Post the rewritten review
+        edit_state = dict(state)
+        edit_state["analysis"] = refined_analysis
+        edit_state["human_feedback"] = f"[auto-edited] {state['human_feedback']}"
+        action = _post(edit_state)
+        action = "committed_after_edit"
+
     else:
         console.print(f"  [yellow]·[/yellow] skipping comment (choice={state.get('human_choice')})")
         action = "rejected"
-    c = state["analysis"].confidence
+
+    c = refined_analysis.confidence
     await audit(state, AuditEntry(
         agent_id=AGENT_ID,
         action="commit",
         confidence=c,
         risk_level=risk_level_for(c),
+        reviewer_id=os.environ.get("GITHUB_USER"),
         decision=action,
         reason=state.get("human_feedback") or ("committed after escalation" if state.get("escalation_answers") else None),
         execution_time_ms=int((time.monotonic() - t0) * 1000),
     ))
-    return {"final_action": action}
+    return {"final_action": action, "analysis": refined_analysis}
 
 
 async def node_auto_approve(state):
