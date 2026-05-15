@@ -14,9 +14,11 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import aiosqlite
 import streamlit as st
 from dotenv import load_dotenv
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
 
 from common.db import db_conn, db_path
@@ -89,7 +91,11 @@ async def _fetch_calibration() -> dict:
 
 async def _resume_from_checkpoint(thread_id: str, checkpoint_id: str):
     """B1 — resume graph from a specific earlier checkpoint."""
-    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
+    async with aiosqlite.connect(db_path()) as conn:
+        cp = AsyncSqliteSaver(conn, serde=JsonPlusSerializer(allowed_msgpack_modules=[
+            ("common.schemas", "PRAnalysis"),
+            ("common.schemas", "ReviewComment"),
+        ]))
         await cp.setup()
         app = build_graph(cp)
         cfg = {"configurable": {"thread_id": thread_id, "checkpoint_id": checkpoint_id}}
@@ -104,7 +110,11 @@ async def _fetch_checkpoints(thread_id: str) -> list[dict]:
     clutter the list.
     """
     try:
-        async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
+        async with aiosqlite.connect(db_path()) as conn:
+            cp = AsyncSqliteSaver(conn, serde=JsonPlusSerializer(allowed_msgpack_modules=[
+            ("common.schemas", "PRAnalysis"),
+            ("common.schemas", "ReviewComment"),
+        ]))
             await cp.setup()
             cfg = {"configurable": {"thread_id": thread_id}}
             app = build_graph(cp)
@@ -279,7 +289,11 @@ def render_escalation_card(payload: dict) -> dict | None:
 
 # ─── Graph helpers ─────────────────────────────────────────────────────────
 async def run_graph(pr_url: str, thread_id: str, resume_value=None):
-    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
+    async with aiosqlite.connect(db_path()) as conn:
+        cp = AsyncSqliteSaver(conn, serde=JsonPlusSerializer(allowed_msgpack_modules=[
+            ("common.schemas", "PRAnalysis"),
+            ("common.schemas", "ReviewComment"),
+        ]))
         await cp.setup()
         app = build_graph(cp)
         cfg = {"configurable": {"thread_id": thread_id}}

@@ -26,8 +26,10 @@ import time
 import uuid
 from typing import Annotated
 
+import aiosqlite
 from dotenv import load_dotenv
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
 from rich.console import Console
@@ -132,13 +134,15 @@ async def node_route(state: FanoutState):
     return {"decision": decision}
 
 
-# ─── B3 — Fan-out node (uses Send API) ─────────────────────────────────────
-def node_escalate_fanout(state: FanoutState):
-    """Fan out the same escalation questions to two reviewers in parallel."""
+# ─── B3 — Fan-out edge mapper (uses Send API) ──────────────────────────────
+def _route_or_fanout(state: FanoutState):
+    """Conditional edge from route: string for simple paths, Send list for fan-out."""
+    decision = state["decision"]
+    if decision != "escalate_fanout":
+        return decision  # "auto_approve" or "human_approval"
     a = state["analysis"]
     questions = a.escalation_questions or ["What is the intent of this PR?", "Any security concerns?"]
     console.print(f"[cyan]→ escalate_fanout[/cyan]  [dim]sending to 2 reviewers[/dim]")
-
     payload_base = {
         "pr_url": state["pr_url"],
         "thread_id": state.get("thread_id", ""),
@@ -300,7 +304,6 @@ def build_fanout_graph(checkpointer):
         ("fetch_pr", node_fetch_pr), ("analyze", node_analyze), ("route", node_route),
         ("auto_approve", node_auto_approve), ("human_approval", node_human_approval),
         ("human_commit", node_human_commit),
-        ("escalate_fanout", node_escalate_fanout),
         ("collect_reviewer", node_collect_reviewer),
         ("join_reviews", node_join_reviews),
         ("synthesize", node_synthesize), ("commit", node_commit),
@@ -310,15 +313,15 @@ def build_fanout_graph(checkpointer):
     g.add_edge(START, "fetch_pr")
     g.add_edge("fetch_pr", "analyze")
     g.add_edge("analyze", "route")
+    # _route_or_fanout returns a string OR [Send, Send] for fan-out
     g.add_conditional_edges(
-        "route", lambda s: s["decision"],
-        {"auto_approve": "auto_approve", "human_approval": "human_approval",
-         "escalate_fanout": "escalate_fanout"},
+        "route", _route_or_fanout,
+        {"auto_approve": "auto_approve", "human_approval": "human_approval"},
     )
     g.add_edge("auto_approve", END)
     g.add_edge("human_approval", "human_commit")
     g.add_edge("human_commit", END)
-    # Fan-out: escalate_fanout → (Send) collect_reviewer × 2 → join_reviews → synthesize → commit
+    # Fan-out: Send → collect_reviewer × 2 → join_reviews → synthesize → commit
     g.add_edge("collect_reviewer", "join_reviews")
     g.add_edge("join_reviews", "synthesize")
     g.add_edge("synthesize", "commit")
@@ -356,15 +359,29 @@ async def run(pr_url: str, thread_id: str | None):
     console.print(f"[dim]PR: {pr_url}[/dim]")
     console.print(f"[dim]thread_id = {thread_id}[/dim]\n")
 
-    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
+    async with aiosqlite.connect(db_path()) as conn:
+        cp = AsyncSqliteSaver(conn, serde=JsonPlusSerializer(allowed_msgpack_modules=[
+            ("common.schemas", "PRAnalysis"),
+            ("common.schemas", "ReviewComment"),
+        ]))
         await cp.setup()
         app = build_fanout_graph(cp)
         cfg = {"configurable": {"thread_id": thread_id}}
 
         result = await app.ainvoke({"pr_url": pr_url, "thread_id": thread_id}, cfg)
         while "__interrupt__" in result:
-            payload = result["__interrupt__"][0].value
-            result = await app.ainvoke(Command(resume=handle_interrupt(payload)), cfg)
+            interrupts = result["__interrupt__"]
+            if len(interrupts) == 1:
+                # Single interrupt (approval or single escalation)
+                resume_val = handle_interrupt(interrupts[0].value)
+                result = await app.ainvoke(Command(resume=resume_val), cfg)
+            else:
+                # Multiple parallel interrupts (fan-out reviewers) — resume all at once
+                resume_map = {
+                    iv.id: handle_interrupt(iv.value)
+                    for iv in interrupts
+                }
+                result = await app.ainvoke(Command(resume=resume_map), cfg)
 
         console.rule("Final")
         console.print(f"final_action = {result.get('final_action')}")

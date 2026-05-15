@@ -31,8 +31,10 @@ import os
 import time
 import uuid
 
+import aiosqlite
 from dotenv import load_dotenv
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from rich.console import Console
@@ -390,7 +392,11 @@ async def run(pr_url: str, thread_id: str | None):
     console.print(f"[dim]PR: {pr_url}[/dim]")
     console.print(f"[dim]thread_id = {thread_id}[/dim]\n")
 
-    async with AsyncSqliteSaver.from_conn_string(db_path()) as cp:
+    async with aiosqlite.connect(db_path()) as conn:
+        cp = AsyncSqliteSaver(conn, serde=JsonPlusSerializer(allowed_msgpack_modules=[
+            ("common.schemas", "PRAnalysis"),
+            ("common.schemas", "ReviewComment"),
+        ]))
         await cp.setup()
         app = build_graph(cp)
         cfg = {"configurable": {"thread_id": thread_id}}
