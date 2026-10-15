@@ -1,5 +1,21 @@
 # Day27 — Track 3: HITL PR Review Agent
 
+---
+
+### 🎓 Thông Tin Nộp Bài Lab 27
+- **Học viên:** Lâm Hải Dương
+- **Mã số sinh viên (MSSV):** 2A202602676
+- **GitHub:** [ElysiaTheElysier](https://github.com/ElysiaTheElysier)
+- **Repository:** [ElysiaTheElysier/K4-DAY27-LamHaiDuong-2A202602676](https://github.com/ElysiaTheElysier/K4-DAY27-LamHaiDuong-2A202602676)
+- **Trạng thái hoàn thành:** **100% (5/5 Exercises)**
+  - [x] **Exercise 1 — Confidence routing (`exercises/exercise_1_confidence.py`):** Phân luồng PR theo độ tin cậy (`auto_approve` >72%, `human_approval` 58–72%, `escalate` <58%).
+  - [x] **Exercise 2 — HITL with `interrupt()` (`exercises/exercise_2_hitl.py`):** Tạm dừng luồng chờ reviewer phê duyệt/từ chối/chỉnh sửa và resume với `Command(resume=...)`.
+  - [x] **Exercise 3 — Escalation with reviewer Q&A (`exercises/exercise_3_escalation.py`):** Sinh câu hỏi làm rõ ngữ cảnh khi gặp rủi ro cao, tổng hợp lại review sau khi có câu trả lời từ người duyệt.
+  - [x] **Exercise 4 — Structured SQLite audit trail (`exercises/exercise_4_audit.py`):** Ghi nhận đầy đủ 10 điểm sự kiện vào `audit_events` và hỗ trợ replay phiên qua `audit.replay`.
+  - [x] **Exercise 5 — Streamlit approval UI (`app.py`):** Xây dựng giao diện Web Streamlit hoàn chỉnh cho cả 3 nhánh tự động, phê duyệt người dùng và leo thang hỏi đáp, kèm sidebar lịch sử phiên duyệt.
+
+---
+
 A 2-hour lab that builds a human-in-the-loop pull-request review agent in **LangGraph**, end-to-end.
 
 > 1. Agent reads a PR, analyzes code changes, proposes review comments.
